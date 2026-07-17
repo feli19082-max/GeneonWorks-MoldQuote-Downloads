@@ -1,0 +1,95 @@
+name: Publish MoldQuote R6.2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-r6.2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish-r6-2:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MANAGED_ARTIFACT_URL: "https://sdmntprjapaneast.oaiusercontent.com/files/00000000-44dc-7209-b21b-0be3d34ebb38/raw?se=2026-07-17T01:22:10Z&sp=r&sv=2026-02-06&sr=b&scid=2f64c0f1-091a-5477-926c-fba0eb70e6dc&skoid=03727f49-62d3-42ac-8350-1c0e6559d238&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-07-16T09:51:04Z&ske=2026-07-18T09:51:04Z&sks=b&skv=2026-02-06&sig=n7mPq5z/bG6ZxIHPKskdFUg/hg2F8gvjit%2BW7yB%2BJkI%3D"
+      BASE_ASSET_NAME: GeneonWorks-MoldQuote-R6.1.4-SouthChina-2026-07-win-x64.zip
+      RELEASE_ASSET_NAME: GeneonWorks-MoldQuote-R6.2-win-x64.zip
+
+    steps:
+      - name: Checkout downloads repository
+        uses: actions/checkout@v4
+
+      - name: Download verified R6.2 managed artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out/managed-artifact | Out-Null
+          Invoke-WebRequest -Uri $env:MANAGED_ARTIFACT_URL -OutFile out/managed-artifact.zip
+          Expand-Archive out/managed-artifact.zip -DestinationPath out/managed-artifact -Force
+          $innerZip = Get-ChildItem out/managed-artifact -Recurse -File -Filter '*.zip' | Select-Object -First 1
+          if (-not $innerZip) { throw 'R6.2 managed package was not found in the workflow artifact.' }
+          New-Item -ItemType Directory -Force -Path out/managed | Out-Null
+          Expand-Archive $innerZip.FullName -DestinationPath out/managed -Force
+          if (-not (Test-Path 'out/managed/GeneonWorks.MoldQuote.Desktop.exe')) {
+            throw 'R6.2 desktop executable is missing from the managed package.'
+          }
+
+      - name: Download R6.1.4 package with OCCT runtime
+        shell: pwsh
+        run: |
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=50" | ConvertFrom-Json
+          $baseRelease = $releases | Where-Object {
+            $_.assets | Where-Object { $_.name -eq $env:BASE_ASSET_NAME }
+          } | Select-Object -First 1
+          if (-not $baseRelease) { throw "Base release asset not found: $env:BASE_ASSET_NAME" }
+          New-Item -ItemType Directory -Force -Path out/base-download | Out-Null
+          gh release download $baseRelease.tag_name --repo $env:GITHUB_REPOSITORY --pattern $env:BASE_ASSET_NAME --dir out/base-download
+          New-Item -ItemType Directory -Force -Path out/base | Out-Null
+          Expand-Archive "out/base-download/$env:BASE_ASSET_NAME" -DestinationPath out/base -Force
+
+      - name: Overlay R6.2 and verify complete runtime
+        shell: pwsh
+        run: |
+          $desktopExe = Get-ChildItem out/base -Recurse -File -Filter 'GeneonWorks.MoldQuote.Desktop.exe' | Select-Object -First 1
+          if (-not $desktopExe) { throw 'Desktop executable was not found in the R6.1.4 base package.' }
+          $appDirectory = $desktopExe.Directory.FullName
+          Copy-Item 'out/managed/*' $appDirectory -Recurse -Force
+
+          $occtRuntime = Get-ChildItem $appDirectory -Recurse -File | Where-Object {
+            $_.Name -match '^(TK.*|TKernel|GeneonWorks\.MoldQuote\.Geometry\.Occt)\.dll$'
+          }
+          if (-not $occtRuntime) { throw 'OCCT native runtime was not preserved in the R6.2 package.' }
+
+          $forbidden = Get-ChildItem out/base -Recurse -File | Where-Object {
+            $_.FullName -match 'LicenseTool|private-key|Program\.cs|\\tools\\'
+          }
+          if ($forbidden) {
+            $forbidden | ForEach-Object { Write-Error "Forbidden release file: $($_.FullName)" }
+            exit 1
+          }
+
+      - name: Package and checksum R6.2
+        shell: pwsh
+        run: |
+          Compress-Archive -Path 'out/base/*' -DestinationPath "out/$env:RELEASE_ASSET_NAME" -Force
+          $hash = (Get-FileHash "out/$env:RELEASE_ASSET_NAME" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $env:RELEASE_ASSET_NAME" | Set-Content "out/$env:RELEASE_ASSET_NAME.sha256" -Encoding ascii
+          Write-Host "R6.2 SHA256: $hash"
+
+      - name: Publish GitHub Release R6.2
+        shell: pwsh
+        run: |
+          gh release view R6.2 --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete R6.2 --repo $env:GITHUB_REPOSITORY --cleanup-tag --yes
+          }
+          gh release create R6.2 `
+            "out/$env:RELEASE_ASSET_NAME" `
+            "out/$env:RELEASE_ASSET_NAME.sha256" `
+            --repo $env:GITHUB_REPOSITORY `
+            --target main `
+            --title 'GeneonWorks MoldQuote R6.2｜7天免费试用 / 永久授权 ¥199' `
+            --notes-file release-notes/R6.2.md
