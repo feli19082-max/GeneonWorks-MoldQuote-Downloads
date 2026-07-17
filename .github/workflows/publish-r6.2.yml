@@ -1,4 +1,4 @@
-name: Verify MoldQuote R6.2 Release
+name: Republish and Verify MoldQuote R6.2
 
 on:
   push:
@@ -11,62 +11,59 @@ permissions:
   contents: write
 
 jobs:
-  verify-r6-2:
+  republish-r6-2:
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: R6.2
       RELEASE_ASSET_NAME: GeneonWorks-MoldQuote-R6.2-win-x64.zip
       CHECKSUM_ASSET_NAME: GeneonWorks-MoldQuote-R6.2-win-x64.zip.sha256
+      MANAGED_ARTIFACT_URL: "https://sdmntprjapaneast.oaiusercontent.com/files/00000000-64a0-7209-a5d8-8f638154a0a9/raw?se=2026-07-17T01:34:22Z&sp=r&sv=2026-02-06&sr=b&scid=4761650e-5b37-5c33-9b6a-887b2abc23d3&skoid=03727f49-62d3-42ac-8350-1c0e6559d238&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-07-17T00:47:59Z&ske=2026-07-19T00:47:59Z&sks=b&skv=2026-02-06&sig=AZ2ohY0rjm0kuSuMBuT2tox5y3isHs4IaSUqxGzQmeI%3D"
 
     steps:
       - name: Checkout downloads repository
         uses: actions/checkout@v4
 
-      - name: Verify release attachment list
+      - name: Download versioned R6.2 managed build
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path out | Out-Null
-          $release = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,name,isDraft,isPrerelease,assets | ConvertFrom-Json
-          if ($release.tagName -ne $env:RELEASE_TAG) { throw 'R6.2 release tag is missing.' }
-          if ($release.isDraft) { throw 'R6.2 release is still a draft.' }
-          $assetNames = @($release.assets | ForEach-Object { $_.name })
-          if ($assetNames -notcontains $env:RELEASE_ASSET_NAME) { throw "Release ZIP is missing: $env:RELEASE_ASSET_NAME" }
-          if ($assetNames -notcontains $env:CHECKSUM_ASSET_NAME) { throw "Checksum is missing: $env:CHECKSUM_ASSET_NAME" }
-          $release | ConvertTo-Json -Depth 8 | Set-Content out/release-metadata.json -Encoding utf8
+          New-Item -ItemType Directory -Force -Path out/managed-artifact | Out-Null
+          Invoke-WebRequest -Uri $env:MANAGED_ARTIFACT_URL -OutFile out/managed-artifact.zip
+          Expand-Archive out/managed-artifact.zip -DestinationPath out/managed-artifact -Force
+          $innerZip = Get-ChildItem out/managed-artifact -Recurse -File -Filter '*.zip' | Select-Object -First 1
+          if (-not $innerZip) { throw 'Managed package ZIP was not found inside the workflow artifact.' }
+          New-Item -ItemType Directory -Force -Path out/managed | Out-Null
+          Expand-Archive $innerZip.FullName -DestinationPath out/managed -Force
+          $managedExe = Get-Item 'out/managed/GeneonWorks.MoldQuote.Desktop.exe'
+          $managedVersion = $managedExe.VersionInfo.FileVersion
+          if ($managedVersion -notlike '6.2.0.0*') { throw "Managed executable version is $managedVersion instead of 6.2.0.0." }
 
-      - name: Download published attachments
+      - name: Download current R6.2 package as native runtime base
         shell: pwsh
         run: |
-          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern $env:RELEASE_ASSET_NAME --dir out
-          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern $env:CHECKSUM_ASSET_NAME --dir out
+          New-Item -ItemType Directory -Force -Path out/current | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern $env:RELEASE_ASSET_NAME --dir out/current
+          New-Item -ItemType Directory -Force -Path out/base | Out-Null
+          Expand-Archive "out/current/$env:RELEASE_ASSET_NAME" -DestinationPath out/base -Force
 
-      - name: Verify SHA256 checksum
+      - name: Overlay versioned application and inspect package
         shell: pwsh
         run: |
-          $actualHash = (Get-FileHash "out/$env:RELEASE_ASSET_NAME" -Algorithm SHA256).Hash.ToLowerInvariant()
-          $checksumLine = (Get-Content "out/$env:CHECKSUM_ASSET_NAME" -Raw).Trim()
-          $expectedHash = ($checksumLine -split '\s+')[0].ToLowerInvariant()
-          if ($actualHash -ne $expectedHash) {
-            throw "SHA256 mismatch. Expected $expectedHash but got $actualHash"
-          }
-          $actualHash | Set-Content out/verified-sha256.txt -Encoding ascii
+          $desktopExe = Get-ChildItem out/base -Recurse -File -Filter 'GeneonWorks.MoldQuote.Desktop.exe' | Select-Object -First 1
+          if (-not $desktopExe) { throw 'Desktop executable is missing from the current R6.2 package.' }
+          $appDirectory = $desktopExe.Directory.FullName
+          Copy-Item 'out/managed/*' $appDirectory -Recurse -Force
 
-      - name: Inspect published package
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path out/package | Out-Null
-          Expand-Archive "out/$env:RELEASE_ASSET_NAME" -DestinationPath out/package -Force
+          $desktopExe = Get-Item (Join-Path $appDirectory 'GeneonWorks.MoldQuote.Desktop.exe')
+          $desktopVersion = $desktopExe.VersionInfo.FileVersion
+          if ($desktopVersion -notlike '6.2.0.0*') { throw "Published executable would have version $desktopVersion instead of 6.2.0.0." }
 
-          $desktopExe = Get-ChildItem out/package -Recurse -File -Filter 'GeneonWorks.MoldQuote.Desktop.exe' | Select-Object -First 1
-          if (-not $desktopExe) { throw 'Desktop executable is missing from the published package.' }
-
-          $occtRuntime = Get-ChildItem out/package -Recurse -File | Where-Object {
+          $occtRuntime = Get-ChildItem out/base -Recurse -File | Where-Object {
             $_.Name -match '^(TK.*|TKernel|GeneonWorks\.MoldQuote\.Geometry\.Occt)\.dll$'
           }
-          if (-not $occtRuntime) { throw 'OCCT native runtime is missing from the published package.' }
+          if (-not $occtRuntime) { throw 'OCCT native runtime is missing after overlay.' }
 
-          $forbidden = Get-ChildItem out/package -Recurse -File | Where-Object {
+          $forbidden = Get-ChildItem out/base -Recurse -File | Where-Object {
             $_.FullName -match 'LicenseTool|private-key|Program\.cs|\\tools\\'
           }
           if ($forbidden) {
@@ -74,10 +71,50 @@ jobs:
             exit 1
           }
 
-          $desktopVersion = (Get-Item $desktopExe.FullName).VersionInfo.FileVersion
-          $packageBytes = (Get-Item "out/$env:RELEASE_ASSET_NAME").Length
+      - name: Package and replace R6.2 attachments
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out/publish | Out-Null
+          Compress-Archive -Path 'out/base/*' -DestinationPath "out/publish/$env:RELEASE_ASSET_NAME" -Force
+          $hash = (Get-FileHash "out/publish/$env:RELEASE_ASSET_NAME" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $env:RELEASE_ASSET_NAME" | Set-Content "out/publish/$env:CHECKSUM_ASSET_NAME" -Encoding ascii
+          gh release upload $env:RELEASE_TAG `
+            "out/publish/$env:RELEASE_ASSET_NAME" `
+            "out/publish/$env:CHECKSUM_ASSET_NAME" `
+            --repo $env:GITHUB_REPOSITORY `
+            --clobber
+
+      - name: Re-download and verify published attachments
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out/verify | Out-Null
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern $env:RELEASE_ASSET_NAME --dir out/verify
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --pattern $env:CHECKSUM_ASSET_NAME --dir out/verify
+
+          $actualHash = (Get-FileHash "out/verify/$env:RELEASE_ASSET_NAME" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumLine = (Get-Content "out/verify/$env:CHECKSUM_ASSET_NAME" -Raw).Trim()
+          $expectedHash = ($checksumLine -split '\s+')[0].ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) { throw "Published SHA256 mismatch: expected $expectedHash, got $actualHash" }
+
+          New-Item -ItemType Directory -Force -Path out/verified-package | Out-Null
+          Expand-Archive "out/verify/$env:RELEASE_ASSET_NAME" -DestinationPath out/verified-package -Force
+          $verifiedExe = Get-ChildItem out/verified-package -Recurse -File -Filter 'GeneonWorks.MoldQuote.Desktop.exe' | Select-Object -First 1
+          if (-not $verifiedExe) { throw 'Published desktop executable is missing.' }
+          $verifiedVersion = $verifiedExe.VersionInfo.FileVersion
+          if ($verifiedVersion -notlike '6.2.0.0*') { throw "Published file version is $verifiedVersion instead of 6.2.0.0." }
+
+          $occtRuntime = Get-ChildItem out/verified-package -Recurse -File | Where-Object {
+            $_.Name -match '^(TK.*|TKernel|GeneonWorks\.MoldQuote\.Geometry\.Occt)\.dll$'
+          }
+          if (-not $occtRuntime) { throw 'Published OCCT runtime is missing.' }
+
+          $forbidden = Get-ChildItem out/verified-package -Recurse -File | Where-Object {
+            $_.FullName -match 'LicenseTool|private-key|Program\.cs|\\tools\\'
+          }
+          if ($forbidden) { throw 'Published package contains private tooling or source.' }
+
+          $packageBytes = (Get-Item "out/verify/$env:RELEASE_ASSET_NAME").Length
           $occtCount = @($occtRuntime).Count
-          $verifiedHash = (Get-Content out/verified-sha256.txt -Raw).Trim()
           New-Item -ItemType Directory -Force -Path release-status | Out-Null
           @"
           # R6.2 Publication Verification
@@ -85,19 +122,19 @@ jobs:
           - Status: VERIFIED
           - Release tag: R6.2
           - Package: $env:RELEASE_ASSET_NAME
-          - SHA256: $verifiedHash
+          - SHA256: $actualHash
           - Package bytes: $packageBytes
-          - Desktop file version: $desktopVersion
+          - Desktop file version: $verifiedVersion
           - OCCT runtime files detected: $occtCount
           - Private license tool/key included: No
           - Verified at UTC: $([DateTimeOffset]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))
           "@ | Set-Content release-status/R6.2-success.md -Encoding utf8
 
-      - name: Commit publication verification record
+      - name: Commit updated publication verification record
         shell: pwsh
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add release-status/R6.2-success.md
-          git commit -m 'release: verify R6.2 published package'
+          git commit -m 'release: verify versioned R6.2 package'
           git push
