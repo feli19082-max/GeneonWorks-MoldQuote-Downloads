@@ -18,7 +18,6 @@ jobs:
       RELEASE_TAG: R6.2
       RELEASE_ASSET_NAME: GeneonWorks-MoldQuote-R6.2-win-x64.zip
       MANAGED_ARTIFACT_URL: "https://sdmntprwestus3.oaiusercontent.com/files/00000000-72d0-81fd-a910-091ae226dacb/raw?se=2026-07-18T15:22:19Z&sp=r&sv=2026-02-06&sr=b&scid=a15ad1f1-181f-4cc9-8707-404d4ad2a814&skoid=1a0ef048-201c-43e0-8950-52d58956a71a&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-07-18T00:16:24Z&ske=2026-07-20T00:16:24Z&sks=b&skv=2026-02-06&sig=pJ2EMQ3Rt4O9umiyaS%2B57%2BOUhoq2x/goBfRo1lY3NJA%3D"
-      BRIDGE_ARTIFACT_URL: "https://sdmntprcentralus.oaiusercontent.com/files/00000000-c210-81f5-bf31-4587b61b9648/raw?se=2026-07-18T14:48:56Z&sp=r&sv=2026-02-06&sr=b&scid=8f864036-f71e-4e94-85f6-0e0fe1eeaa03&skoid=1a0ef048-201c-43e0-8950-52d58956a71a&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-07-18T00:22:24Z&ske=2026-07-20T00:22:24Z&sks=b&skv=2026-02-06&sig=L1jsn88wWFb0iseI6VggMwliNFODeBaIfOa3L5siGPI%3D"
 
     steps:
       - name: Checkout downloads repository
@@ -43,20 +42,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path out/managed | Out-Null
           Expand-Archive $innerZip.FullName -DestinationPath out/managed -Force
 
-      - name: Download latest verified geometry bridge
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri $env:BRIDGE_ARTIFACT_URL -OutFile out/bridge-artifact.zip
-          New-Item -ItemType Directory -Force -Path out/bridge | Out-Null
-          Expand-Archive out/bridge-artifact.zip -DestinationPath out/bridge -Force
-          if (-not (Get-ChildItem out/bridge -Recurse -File -Filter 'GeneonWorks.MoldQuote.Geometry.Bridge.dll')) {
-            throw 'Latest geometry bridge DLL is missing.'
-          }
-          if (-not (Get-ChildItem out/bridge -Recurse -File -Filter 'ijwhost.dll')) {
-            throw 'Latest ijwhost.dll is missing.'
-          }
-
-      - name: Overlay latest application and geometry bridge
+      - name: Overlay latest managed application
         shell: pwsh
         run: |
           $desktopExe = Get-ChildItem out/package -Recurse -File -Filter 'GeneonWorks.MoldQuote.Desktop.exe' | Select-Object -First 1
@@ -65,12 +51,6 @@ jobs:
           Copy-Item 'out/managed/*' $appDirectory -Recurse -Force
 
           $geometryDirectory = Join-Path $appDirectory 'geometry'
-          New-Item -ItemType Directory -Force -Path $geometryDirectory | Out-Null
-          $bridgeDll = Get-ChildItem out/bridge -Recurse -File -Filter 'GeneonWorks.MoldQuote.Geometry.Bridge.dll' | Select-Object -First 1
-          $ijwHost = Get-ChildItem out/bridge -Recurse -File -Filter 'ijwhost.dll' | Select-Object -First 1
-          Copy-Item $bridgeDll.FullName $geometryDirectory -Force
-          Copy-Item $ijwHost.FullName $geometryDirectory -Force
-          Copy-Item $ijwHost.FullName $appDirectory -Force
 
           $required = @(
             (Join-Path $appDirectory 'GeneonWorks.MoldQuote.Desktop.exe'),
