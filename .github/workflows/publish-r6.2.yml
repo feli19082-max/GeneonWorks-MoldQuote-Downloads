@@ -17,7 +17,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: R6.2
       RELEASE_ASSET_NAME: GeneonWorks-MoldQuote-R6.2-win-x64.zip
-      MANAGED_ARTIFACT_URL: "https://sdmntprwestus3.oaiusercontent.com/files/00000000-72d0-81fd-a910-091ae226dacb/raw?se=2026-07-18T15:22:19Z&sp=r&sv=2026-02-06&sr=b&scid=a15ad1f1-181f-4cc9-8707-404d4ad2a814&skoid=1a0ef048-201c-43e0-8950-52d58956a71a&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-07-18T00:16:24Z&ske=2026-07-20T00:16:24Z&sks=b&skv=2026-02-06&sig=pJ2EMQ3Rt4O9umiyaS%2B57%2BOUhoq2x/goBfRo1lY3NJA%3D"
+      MANAGED_ARTIFACT_URL: "https://sdmntprwestus3.oaiusercontent.com/files/00000000-6370-81fd-a5ea-17f5f9196867/raw?se=2026-07-18T15:29:27Z&sp=r&sv=2026-02-06&sr=b&scid=5037f82f-0c7f-4a6c-9bc2-869e908c6268&skoid=1a0ef048-201c-43e0-8950-52d58956a71a&sktid=a48cca56-e6da-484e-a814-9c849652bcb3&skt=2026-07-18T14:45:20Z&ske=2026-07-20T14:45:20Z&sks=b&skv=2026-02-06&sig=gmjFfJYUZIBJWBBrgDgGvOjoU7mfSWyVmsc5RywChrw%3D"
 
     steps:
       - name: Checkout downloads repository
