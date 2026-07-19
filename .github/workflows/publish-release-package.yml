@@ -33,10 +33,10 @@ jobs:
           unzip -p artifact.zip "$asset" > "$asset"
           test -s "$asset"
           unzip -t "$asset"
-          sha256sum "$asset" | tee release-sha256.txt
+          sha256sum "$asset" | tee "$asset.sha256"
 
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" "$asset" --clobber
+            gh release upload "$tag" "$asset" "$asset.sha256" --clobber
           else
-            gh release create "$tag" "$asset" --title "$tag" --notes "Windows x64 complete package."
+            gh release create "$tag" "$asset" "$asset.sha256" --title "$tag" --notes "Windows x64 complete package."
           fi
