@@ -1,0 +1,48 @@
+name: Publish MoldQuote R6.2.1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-r6.2.1.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_TAG: R6.2
+      TARGET_TAG: R6.2.1
+      SOURCE_ASSET: GeneonWorks-MoldQuote-R6.2-win-x64.zip
+      TARGET_ASSET: GeneonWorks-MoldQuote-R6.2.1-win-x64.zip
+    steps:
+      - name: Checkout download repository
+        uses: actions/checkout@v4
+
+      - name: Publish verified complete package as R6.2.1
+        run: |
+          mkdir -p out/source out/published
+          gh release download "$SOURCE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$SOURCE_ASSET" --dir out/source
+          cp "out/source/$SOURCE_ASSET" "out/$TARGET_ASSET"
+          sha256sum "out/$TARGET_ASSET" | tee "out/$TARGET_ASSET.sha256"
+
+          notes=$'2026-07-19 更新\n\n- STEP 导入先返回基础几何与报价，倒扣分析转为后台执行；\n- 完整 Windows x64 包已包含 OCCT 几何运行库；\n- 倒扣候选仍须人工确认，默认不计费。'
+          if gh release view "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TARGET_TAG" "out/$TARGET_ASSET" "out/$TARGET_ASSET.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" --title 'GeneonWorks MoldQuote R6.2.1｜2026-07-19 最新版' --notes "$notes"
+          else
+            gh release create "$TARGET_TAG" "out/$TARGET_ASSET" "out/$TARGET_ASSET.sha256" --repo "$GITHUB_REPOSITORY" --title 'GeneonWorks MoldQuote R6.2.1｜2026-07-19 最新版' --notes "$notes"
+          fi
+
+      - name: Verify public attachments
+        run: |
+          gh release download "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$TARGET_ASSET" --dir out/published
+          gh release download "$TARGET_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$TARGET_ASSET.sha256" --dir out/published
+          actual="$(sha256sum "out/published/$TARGET_ASSET" | awk '{print $1}')"
+          expected="$(awk '{print $1}' "out/published/$TARGET_ASSET.sha256")"
+          test "$actual" = "$expected"
+          echo "Verified SHA-256: $actual"
